@@ -187,41 +187,70 @@ class ReplayFeatBuffer(object):
 
 
 class ReplayBuffer(object):
-	def __init__(self, state_dim, action_dim, max_size=int(1e6)):
-		self.max_size = max_size
-		self.ptr = 0
-		self.size = 0
+    def __init__(self, state_dim, action_dim, max_size=int(1e6)):
+        self.max_size = max_size
+        self.ptr = 0
+        self.size = 0
 
-		self.state = np.zeros((max_size, state_dim))
-		self.action = np.zeros((max_size, action_dim))
-		self.next_state = np.zeros((max_size, state_dim))
-		self.reward = np.zeros((max_size, 1))
-		self.not_done = np.zeros((max_size, 1))
+        self.state = np.zeros((max_size, state_dim))
+        self.action = np.zeros((max_size, action_dim))
+        self.next_state = np.zeros((max_size, state_dim))
+        self.reward = np.zeros((max_size, 1))
+        self.not_done = np.zeros((max_size, 1))
 
-		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.mean = 0.
+        self.std = 1.
+
+    def add(self, state, action, next_state, reward, done):
+        self.state[self.ptr] = state
+        self.action[self.ptr] = action
+        self.next_state[self.ptr] = next_state
+        self.reward[self.ptr] = reward
+        self.not_done[self.ptr] = 1. - done
+
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
 
 
-	def add(self, state, action, next_state, reward, done):
-		self.state[self.ptr] = state
-		self.action[self.ptr] = action
-		self.next_state[self.ptr] = next_state
-		self.reward[self.ptr] = reward
-		self.not_done[self.ptr] = 1. - done
+    def sample(self, batch_size):
+        ind = np.random.randint(0, self.size, size=batch_size)
 
-		self.ptr = (self.ptr + 1) % self.max_size
-		self.size = min(self.size + 1, self.max_size)
+        state = torch.FloatTensor((self.state[ind]-self.mean)/self.std).to(self.device)
+        next_state = torch.FloatTensor((self.next_state[ind]-self.mean)/self.std).to(self.device)
+        return (
+            state,
+            torch.FloatTensor(self.action[ind]).to(self.device),
+            next_state,
+            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.not_done[ind]).to(self.device)
+        )
 
 
-	def sample(self, batch_size):
-		ind = np.random.randint(0, self.size, size=batch_size)
+    def priority_sample(self, batch_size, ratio=0.1):
+        priority_size = int(ratio*self.size)
+        ind = np.random.randint(0, priority_size, size=batch_size)
+        ind = np.ones(ind.shape) * self.ptr - ind
+        ind[ind < 0] = ind[ind < 0] + self.size
 
-		return (
-			torch.FloatTensor(self.state[ind]).to(self.device),
-			torch.FloatTensor(self.action[ind]).to(self.device),
-			torch.FloatTensor(self.next_state[ind]).to(self.device),
-			torch.FloatTensor(self.reward[ind]).to(self.device),
-			torch.FloatTensor(self.not_done[ind]).to(self.device)
-		)
+        ind = np.random.randint(0, self.size, size=batch_size)
+
+        state = torch.FloatTensor((self.state[ind]-self.mean)/self.std).to(self.device)
+        next_state = torch.FloatTensor((self.next_state[ind]-self.mean)/self.std).to(self.device)
+        return (
+            state,
+            torch.FloatTensor(self.action[ind]).to(self.device),
+            next_state,
+            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.not_done[ind]).to(self.device)
+        )
+
+
+    def normalize_states(self, eps=1e-3):
+        self.mean = self.state.mean(0, keepdims=True)
+        self.std = self.state.std(0, keepdims=True) + eps
+        return self.mean, self.std
 
 
 class LazyFrames(object):
@@ -272,3 +301,10 @@ def count_parameters(net, as_int=False):
     if as_int:
         return count
     return f"{count:,}"
+
+
+
+def add_tag(args):
+    job_tag = f"_{args.job_name}" if args.job_name != '' else ""
+    t = f"_fullsamples{args.full_samples}_offlineiters{args.offline_iters}{job_tag}"
+    return t

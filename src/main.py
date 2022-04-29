@@ -13,7 +13,7 @@ from env.wrappers import make_feat_env
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(env, policy, env_name, seed, eval_episodes=10):
+def eval_policy(env, policy, env_name, seed, eval_episodes=10, mean=0, std=1, offline=False):
     #eval_env = gym.make(env_name)
     eval_env = env
     eval_env.seed(seed + 100)
@@ -22,14 +22,17 @@ def eval_policy(env, policy, env_name, seed, eval_episodes=10):
     for _ in range(eval_episodes):
         state, done = eval_env.reset(), False
         while not done:
-            action = policy.select_action(np.array(state))
+            action = policy.select_action(np.array(state), offline=offline)
             state, reward, done, _ = eval_env.step(action)
             avg_reward += reward
 
     avg_reward /= eval_episodes
 
     print("---------------------------------------")
-    print(f"Evaluation over {eval_episodes} episodes: {avg_reward:.3f}")
+    if offline:
+        print(f"Offline Policy Evaluation over {eval_episodes} episodes: {avg_reward:.3f}")
+    else:
+        print(f"Evaluation over {eval_episodes} episodes: {avg_reward:.3f}")
     print("---------------------------------------")
     return avg_reward
 
@@ -60,12 +63,17 @@ if __name__ == "__main__":
     parser.add_argument("--episode_length", default=800, type=int)
     parser.add_argument("--action_repeat", default=4, type=int)
     parser.add_argument("--image_size", default=84)
+    parser.add_argument("--job_name", default="", type=str)
+    parser.add_argument("--offline_iters", default=10, type=int)
+    parser.add_argument("--full_samples", action="store_true")
+    parser.add_argument("--priority_samples", action="store_true")
 
     args = parser.parse_args()
 
-    file_name = f"{args.policy}_{args.env}_{args.seed}"
+    file_name = f"{args.policy}_{args.domain_name}_{args.task_name}{utils.add_tag(args)}_{args.seed}"
     print("---------------------------------------")
     print(f"Policy: {args.policy}, Env: {args.domain_name}_{args.task_name}, Seed: {args.seed}")
+    print(f"Filename: {file_name}")
     print("---------------------------------------")
 
     if not os.path.exists("./results"):
@@ -125,11 +133,14 @@ if __name__ == "__main__":
     
     # Evaluate untrained policy
     evaluations = [eval_policy(env, policy, args.env, args.seed)]
-
+    offline_evaluations = [evaluations[0]]
     state, done = env.reset(), False
     episode_reward = 0
     episode_timesteps = 0
     episode_num = 0
+
+    state_mean = 0.
+    state_std = 1.
 
     for t in range(int(args.max_timesteps)):
         
@@ -156,6 +167,8 @@ if __name__ == "__main__":
 
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
+            if t == args.start_timesteps:
+                state_mean, state_std = replay_buffer.normalize_states()
             policy.train(replay_buffer, args.batch_size)
 
         if done: 
@@ -169,6 +182,13 @@ if __name__ == "__main__":
 
         # Evaluate episode
         if (t + 1) % args.eval_freq == 0:
-            evaluations.append(eval_policy(env, policy, args.env, args.seed))
+            evaluations.append(eval_policy(env, policy, args.env, args.seed, mean=state_mean, std=state_std))
+            # offline training and evaluation
+            if t >= args.start_timesteps:
+                policy.offline_train(replay_buffer, args.batch_size, full_samples=args.full_samples, iters=args.offline_iters)
+                offline_evaluations.append(eval_policy(env, policy, args.env, args.seed, mean=state_mean, std=state_std, offline=True))
+            else:
+                offline_evaluations.append(evaluations[-1])
             np.save(f"./results/{file_name}", evaluations)
+            np.save(f"./results/{file_name}_offline", offline_evaluations)
             if args.save_model: policy.save(f"./models/{file_name}")
