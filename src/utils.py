@@ -306,5 +306,5 @@ def count_parameters(net, as_int=False):
 
 def add_tag(args):
     job_tag = f"_{args.job_name}" if args.job_name != '' else ""
-    t = f"_fullsamples{args.full_samples}_offlineiters{args.offline_iters}{job_tag}"
+    t = f"_fullsamples{args.full_samples}_offlineiters{args.offline_iters}_SI{args.self_imitation}{job_tag}"
     return t

@@ -66,7 +66,8 @@ if __name__ == "__main__":
     parser.add_argument("--job_name", default="", type=str)
     parser.add_argument("--offline_iters", default=10, type=int)
     parser.add_argument("--full_samples", action="store_true")
-    parser.add_argument("--priority_samples", action="store_true")
+    # parser.add_argument("--priority_samples", action="store_true")
+    parser.add_argument("--self_imitation", action="store_true")
 
     args = parser.parse_args()
 
@@ -169,7 +170,10 @@ if __name__ == "__main__":
         if t >= args.start_timesteps:
             if t == args.start_timesteps:
                 state_mean, state_std = replay_buffer.normalize_states()
-            policy.train(replay_buffer, args.batch_size)
+            if args.self_imitation and t % 2 == 1:
+                policy.train(replay_buffer, args.batch_size, self_imitation=args.self_imitation)
+            else:
+                policy.train(replay_buffer, args.batch_size)
 
         if done: 
             # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True

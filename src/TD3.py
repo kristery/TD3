@@ -97,7 +97,6 @@ class TD3(object):
 		self.total_it = 0
 		self.alpha = alpha
 
-
 		# offline policy training
 		self.offline_a = copy.deepcopy(self.actor)
 
@@ -177,11 +176,14 @@ class TD3(object):
 				for param, target_param in zip(self.offline_a.parameters(), self.offline_a_target.parameters()):
 					target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
-	def train(self, replay_buffer, batch_size=256):
+	def train(self, replay_buffer, batch_size=256, self_imitation=False):
 		self.total_it += 1
 
 		# Sample replay buffer 
-		state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+		if self_imitation:
+			state, action, next_state, reward, not_done = replay_buffer.priority_sample(batch_size)	
+		else:
+			state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
 
 		with torch.no_grad():
 			# Select action according to policy and add clipped noise
